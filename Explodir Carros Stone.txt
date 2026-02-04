@@ -1,0 +1,21 @@
+Explodir carros
+
+-- Função que será executada continuamente
+function explodeNearby()
+    local vehicles = getElementsByType("vehicle")
+    for _, vehicle in ipairs(vehicles) do
+        -- Verifica se o veículo está carregado (streamed in) e se ainda tem vida
+        if isElementStreamedIn(vehicle) and getElementHealth(vehicle) > 0 then
+            -- Define a vida como 0 e explode
+            setElementHealth(vehicle, 0)
+            blowVehicle(vehicle, true)
+        end
+    end
+end
+
+-- Adiciona o evento para rodar a cada frame (cuidado: isso é pesado)
+-- Para um pentest mais controlado, você pode usar um timer de 1 segundo
+addEventHandler("onClientRender", root, explodeNearby)
+
+-- Para parar o script depois, você precisaria de:
+-- removeEventHandler("onClientRender", root, explodeNearby)

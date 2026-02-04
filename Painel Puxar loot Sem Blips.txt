@@ -1,0 +1,301 @@
+---------------------------------------
+-- CONFIG
+---------------------------------------
+local menuKey = "]"
+local pullKey = "n"
+local pullSpeed = 0.15
+local pullDistance = 30
+
+---------------------------------------
+-- ESTADO
+---------------------------------------
+local menuOpen = false
+local selectedIDs = {}
+
+local ui = {
+    window = nil,
+    editDistance = nil,
+
+    -- layout novo
+    catList = nil,         -- gridlist esquerda
+    itemsPane = nil,       -- scrollpane direita
+    masterCheck = nil,     -- marcar todos (direita)
+    currentCat = nil,
+
+    itemRows = {},         -- { {cb=element, ids={...}} ... } da categoria atual
+}
+
+---------------------------------------
+-- CATEGORIAS (padronizado)
+---------------------------------------
+local categories = {
+    MOCHILAS = {{1974,"Field Green"},{1899,"Field Black"},{1909,"Field Camo"}},
+    COLETES  = {{1952,"Police Vest"},{1955,"Press Vest"}},
+    RIFLES   = {{2347,"AK74"},{2348,"AK101"},{2288,"SA-58"},{1509,"AKM"},{1950,"AUG"},{1951,"FAL"},{1512,"M4"},{1487,"M249"}},
+    SNIPERS  = {{2613,"Mosin"},{1943,"M70 Tundra"},{1485,"VS-89"},{2105,"Barrett"}},
+
+    MUNICAO = {
+        {{1863,2966},"5.45x39"},
+        {{1864,2176},"5.56x45"},
+        {{1865,1664},"7.62x39"},
+        {{1869,1543},".308"},
+        {{2352,3044},".50 BMG"}
+    },
+
+    MEDICO   = {{2902,"Saline"},{2274,"Blood Bag"},{2855,"Morphine"},{1840,"Bandage"}},
+    CAPACETE = {{1486,"Capa Verde"},{1835,"K6"},{2325,"K6 Ghillie"},{1832,"Gasmask"},{2785,"Capa Verde Ghillie"},{2349,"Gasmask Ghillie"},{2752,"Capa Preto"},{1895,"Capa Preto Ghillie"}},
+    COMIDA   = {{1902,"Beacon Enlatado"},{1911,"Sardinha"},{1904,"Enlatado de Pêssego"},{1921,"Macarrão Enlatado"},{1940,"Cereal"}},
+
+    BEBIDAS  = { {{2998,2999,3000,3001,1932,1901}, "Bebidas"} },
+
+    TENDAS   = {{1898,"Tenda de Carro"},{1666,"Tenda Média"},{2958,"Tenda Grande"},{2751,"Tenda"}},
+    ["TENDAS DE BASE"] = {{14603,"Tenda de Carro"},{9362,"Tenda Grande"},{14814,"Tenda Média"},{3919,"Tenda"}},
+
+    CARRO    = {{2293,"Vela"},{2079,"Bateria"},{2224,"Radiador"},{1650,"Gasolina"}},
+
+    OUTROS   = {{5171,"Rádio"},{1581,"Cartão do Bunker"},{1589,"Roupa"}},
+
+    PLATE    = { {{2053,1954,2869,1957,2500}, "Todos Plates"} },
+}
+
+local order = {
+    "MOCHILAS","COLETES","RIFLES","SNIPERS","MUNICAO",
+    "MEDICO","CAPACETE","COMIDA","BEBIDAS",
+    "TENDAS","TENDAS DE BASE","CARRO","OUTROS","PLATE"
+}
+
+---------------------------------------
+-- HELPERS (ids)
+---------------------------------------
+local function getItemIds(it)
+    if type(it[1]) == "table" then
+        return it[1]
+    end
+    return { it[1] }
+end
+
+local function setIdsState(ids, state)
+    for _, id in ipairs(ids) do
+        selectedIDs[id] = state
+    end
+end
+
+local function isAllIdsChecked(ids)
+    for _, id in ipairs(ids) do
+        if not selectedIDs[id] then
+            return false
+        end
+    end
+    return true
+end
+
+local function isCategoryChecked(cat)
+    local list = categories[cat]
+    if not list then return false end
+    for _, it in ipairs(list) do
+        if not isAllIdsChecked(getItemIds(it)) then
+            return false
+        end
+    end
+    return true
+end
+
+local function updateMasterForCurrent()
+    if isElement(ui.masterCheck) and ui.currentCat then
+        guiCheckBoxSetSelected(ui.masterCheck, isCategoryChecked(ui.currentCat))
+    end
+end
+
+---------------------------------------
+-- UI: destrói itens da direita
+---------------------------------------
+local function clearItemsPanel()
+    if isElement(ui.itemsPane) then
+        destroyElement(ui.itemsPane)
+        ui.itemsPane = nil
+    end
+    ui.itemRows = {}
+end
+
+---------------------------------------
+-- UI: monta itens da direita para uma categoria
+---------------------------------------
+local function buildItemsForCategory(cat)
+    if not isElement(ui.window) then return end
+    ui.currentCat = cat
+
+    -- limpa painel anterior
+    if isElement(ui.itemsPane) then
+        destroyElement(ui.itemsPane)
+    end
+    ui.itemRows = {}
+
+    -- scroll dos itens (direita)
+    ui.itemsPane = guiCreateScrollPane(200, 115, 390, 345, false, ui.window)
+
+    local y = 12
+    local lineHeight = 28     -- espaço entre linhas
+    local paddingX = 18       -- margem esquerda
+
+    for _, it in ipairs(categories[cat] or {}) do
+        local ids = getItemIds(it)
+        local label = it[2] or ("ID " .. tostring(ids[1]))
+        local checked = isAllIdsChecked(ids)
+
+        local cb = guiCreateCheckBox(
+            paddingX,
+            y,
+            360,
+            22,
+            label,
+            checked,
+            false,
+            ui.itemsPane
+        )
+
+        table.insert(ui.itemRows, { cb = cb, ids = ids })
+
+        addEventHandler("onClientGUIClick", cb, function()
+            local state = guiCheckBoxGetSelected(cb)
+            setIdsState(ids, state)
+            updateMasterForCurrent()
+        end, false)
+
+        y = y + lineHeight
+    end
+
+    -- atualiza "Marcar todos"
+    updateMasterForCurrent()
+end
+
+---------------------------------------
+-- UI: seleciona categoria pelo índice do grid
+---------------------------------------
+local function selectCategoryByRow(row)
+    if not isElement(ui.catList) then return end
+    local cat = guiGridListGetItemData(ui.catList, row, 1)
+    if type(cat) == "string" and categories[cat] then
+        buildItemsForCategory(cat)
+    end
+end
+
+---------------------------------------
+-- UI: criar janela (layout esquerda/direita)
+---------------------------------------
+local function createMenu()
+    if isElement(ui.window) then return end
+
+    local sx, sy = guiGetScreenSize()
+    local w, h = 600, 480
+    local x, y = (sx - w) / 2, (sy - h) / 2
+
+    ui.window = guiCreateWindow(x, y, w, h, "MENU PUXAR OBJETOS", false)
+    guiWindowSetSizable(ui.window, false)
+
+    guiCreateLabel(15, 28, 140, 20, "Distância:", false, ui.window)
+    ui.editDistance = guiCreateEdit(90, 25, 80, 25, tostring(pullDistance), false, ui.window)
+    local btnApply = guiCreateButton(180, 25, 80, 25, "Aplicar", false, ui.window)
+
+    -- títulos
+    guiCreateLabel(15, 75, 160, 20, "CATEGORIAS", false, ui.window)
+    guiCreateLabel(200, 75, 160, 20, "ITENS", false, ui.window)
+
+    -- lista de categorias (esquerda) com scrollbar automática
+    ui.catList = guiCreateGridList(10, 105, 180, 355, false, ui.window)
+    guiGridListAddColumn(ui.catList, "Nome", 0.85)
+
+    for _, cat in ipairs(order) do
+        if categories[cat] then
+            local row = guiGridListAddRow(ui.catList)
+            guiGridListSetItemText(ui.catList, row, 1, cat, false, false)
+            guiGridListSetItemData(ui.catList, row, 1, cat)
+        end
+    end
+
+    -- marcar todos (direita, fora do scroll)
+    ui.masterCheck = guiCreateCheckBox(200, 95, 200, 18, "Marcar todos", false, false, ui.window)
+
+    -- eventos
+    addEventHandler("onClientGUIClick", btnApply, function()
+        local v = tonumber(guiGetText(ui.editDistance))
+        if v then
+            pullDistance = math.max(1, math.min(9999, v))
+        end
+        guiSetText(ui.editDistance, tostring(pullDistance))
+    end, false)
+
+    addEventHandler("onClientGUIClick", ui.catList, function()
+        local row = guiGridListGetSelectedItem(ui.catList)
+        if row and row ~= -1 then
+            selectCategoryByRow(row)
+        end
+    end, false)
+
+    addEventHandler("onClientGUIClick", ui.masterCheck, function()
+        if not ui.currentCat then return end
+        local state = guiCheckBoxGetSelected(ui.masterCheck)
+        for _, row in ipairs(ui.itemRows) do
+            setIdsState(row.ids, state)
+            if isElement(row.cb) then
+                guiCheckBoxSetSelected(row.cb, state)
+            end
+        end
+    end, false)
+
+    -- seleciona a primeira categoria automaticamente
+    if guiGridListGetRowCount(ui.catList) > 0 then
+        guiGridListSetSelectedItem(ui.catList, 0, 1)
+        selectCategoryByRow(0)
+    end
+end
+
+local function toggleMenu(state)
+    menuOpen = state
+    if menuOpen then
+        createMenu()
+        guiSetVisible(ui.window, true)
+        showCursor(true)
+        guiBringToFront(ui.window)
+    else
+        if isElement(ui.window) then
+            guiSetVisible(ui.window, false)
+        end
+        showCursor(false)
+    end
+end
+
+---------------------------------------
+-- PUXAR OBJETOS
+---------------------------------------
+local function pullNearbyObjects()
+    local px, py, pz = getElementPosition(localPlayer)
+    for _, o in ipairs(getElementsByType("object")) do
+        local id = getElementModel(o)
+        if selectedIDs[id] then
+            local ox, oy, oz = getElementPosition(o)
+            if getDistanceBetweenPoints3D(px, py, pz, ox, oy, oz) <= pullDistance then
+                setElementPosition(
+                    o,
+                    ox + (px - ox) * pullSpeed,
+                    oy + (py - oy) * pullSpeed,
+                    oz + (pz - oz) * pullSpeed
+                )
+            end
+        end
+    end
+end
+
+---------------------------------------
+-- BINDS
+---------------------------------------
+bindKey(menuKey, "down", function()
+    toggleMenu(not menuOpen)
+end)
+
+bindKey(pullKey, "down", function()
+    addEventHandler("onClientRender", root, pullNearbyObjects)
+end)
+
+bindKey(pullKey, "up", function()
+    removeEventHandler("onClientRender", root, pullNearbyObjects)
+end)

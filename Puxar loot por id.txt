@@ -1,0 +1,32 @@
+Consegue fazer um menuzinho para MTA com todas esses objetos separados por categoria, e q eu posso selecionar diversos IDS ao mesmo tempo e puxar eles, aki o script de puxar os objetos 
+local pullKey = "n"      -- tecla para puxar
+local pullDistance = 30 -- distância máxima
+local pullSpeed = 0.15  -- velocidade do puxão
+local targetModel = 14603
+
+function pullNearbyObjects()
+    local px, py, pz = getElementPosition(localPlayer)
+
+    for _, obj in ipairs(getElementsByType("object")) do
+        if getElementModel(obj) == targetModel then
+            local ox, oy, oz = getElementPosition(obj)
+            local dist = getDistanceBetweenPoints3D(px, py, pz, ox, oy, oz)
+
+            if dist <= pullDistance then
+                local nx = ox + (px - ox) * pullSpeed
+                local ny = oy + (py - oy) * pullSpeed
+                local nz = oz + (pz - oz) * pullSpeed
+
+                setElementPosition(obj, nx, ny, nz)
+            end
+        end
+    end
+end
+
+bindKey(pullKey, "down", function()
+    addEventHandler("onClientRender", root, pullNearbyObjects)
+end)
+
+bindKey(pullKey, "up", function()
+    removeEventHandler("onClientRender", root, pullNearbyObjects)
+end)

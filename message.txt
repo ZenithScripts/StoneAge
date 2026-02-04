@@ -1,0 +1,457 @@
+---------------------------------------
+-- CONFIG
+---------------------------------------
+local menuKey = "PgUp"
+local pullKey = "n"
+local pullSpeed = 0.15
+local pullDistance = 10000
+
+---------------------------------------
+-- ESTADO (Puxar Objetos)
+---------------------------------------
+local menuOpen = false
+local selectedIDs = {}
+
+local ui = {
+    window = nil,
+    editDistance = nil,
+
+    catList = nil,       -- esquerda
+    itemsPane = nil,     -- direita (scroll)
+    masterCheck = nil,   -- marcar todos (modo itens)
+    currentCat = nil,
+
+    itemRows = {},       -- itens da categoria atual (modo itens)
+}
+
+---------------------------------------
+-- BLIPS (Categoria dentro do menu)
+---------------------------------------
+local blips = {}
+blips.elems = {}
+
+blips.cfg = {
+    player = {
+        elemType = "player",
+        enabled = false,
+        color = {255, 255, 0, 255},
+        name = "Jogadores",
+    },
+    vehicle = {
+        elemType = "vehicle",
+        enabled = false,
+        color = {255, 0, 0, 255},
+        name = "Veículos",
+    },
+    object = {
+        elemType = "object",
+        enabled = false,
+        color = {0, 255, 0, 255},
+        name = "Objetos",
+        query = function(elem)
+            return getElementData(elem, "info:PlacedObject") ~= false
+        end,
+    },
+    helicrash = {
+        elemType = "object",
+        enabled = false,
+        color = {255, 255, 255, 255},
+        name = "Helicrash",
+        query = function(elem)
+            return getElementData(elem, "Helicrash") ~= false
+        end,
+    },
+    tankcrash = {
+        elemType = "object",
+        enabled = false,
+        color = {100, 255, 100, 255},
+        name = "Tankcrash",
+        query = function(elem)
+            return getElementData(elem, "Tankcrash") ~= false
+        end,
+    },
+}
+
+function blips.Toggle(what, state)
+    local c = blips.cfg[what]
+    if not c then return end
+    c.enabled = state
+    blips.Refresh()
+end
+
+function blips.Refresh()
+    for k, c in pairs(blips.cfg) do
+        blips.elems[k] = blips.elems[k] or {}
+
+        -- limpa blips mortos ou se desativou
+        for elem, bl in pairs(blips.elems[k]) do
+            if (not isElement(elem)) or (not c.enabled) then
+                if isElement(bl) then destroyElement(bl) end
+                blips.elems[k][elem] = nil
+            end
+        end
+
+        -- cria blips se ativado
+        if c.enabled then
+            local r, g, b, a = unpack(c.color)
+            for _, elem in ipairs(getElementsByType(c.elemType, root)) do
+                if (not blips.elems[k][elem]) and (not c.query or c.query(elem)) then
+                    local bl = createBlipAttachedTo(elem, 0, 2, r, g, b, a, 0, 500)
+                    blips.elems[k][elem] = bl
+                end
+            end
+        end
+    end
+end
+
+-- refresh silencioso dos blips
+setTimer(function()
+    blips.Refresh()
+end, 5000, 0)
+
+addEventHandler("onClientResourceStop", resourceRoot, function()
+    for _, map in pairs(blips.elems) do
+        for _, b in pairs(map) do
+            if isElement(b) then destroyElement(b) end
+        end
+    end
+end)
+
+---------------------------------------
+-- CATEGORIAS (Puxar Objetos)
+---------------------------------------
+local categories = {
+    MOCHILAS = {{1974,"Field Green"},{1899,"Field Black"},{1909,"Field Camo"}},
+    COLETES  = {{1952,"Police Vest"},{1955,"Press Vest"}},
+    RIFLES   = {{2347,"AK74"},{2348,"AK101"},{2288,"SA-58"},{1509,"AKM"},{1950,"AUG"},{1951,"FAL"},{1512,"M4"},{1487,"M249"}},
+    SNIPERS  = {{2613,"Mosin"},{1943,"M70 Tundra"},{1485,"VS-89"},{2105,"Barrett"}},
+
+    MUNICAO = {
+        {{1863,2966},"5.45x39"},
+        {{1864,2176},"5.56x45"},
+        {{1865,1664},"7.62x39"},
+        {{1869,1543},".308"},
+        {{2352,3044},".50 BMG"}
+    },
+
+    MEDICO   = {{2902,"Saline"},{2274,"Blood Bag"},{2855,"Morphine"},{1840,"Bandage"}},
+    CAPACETE = {{1486,"Capa Verde"},{1835,"K6"},{2325,"K6 Ghillie"},{1832,"Gasmask"},{2785,"Capa Verde Ghillie"},{2349,"Gasmask Ghillie"},{2752,"Capa Preto"},{1895,"Capa Preto Ghillie"}},
+    COMIDA   = {{1902,"Beacon Enlatado"},{1911,"Sardinha"},{1904,"Enlatado de Pêssego"},{1921,"Macarrão Enlatado"},{1940,"Cereal"}},
+
+    BEBIDAS  = { {{2998,2999,3000,3001,1932,1901}, "Bebidas"} },
+
+    TENDAS   = {{1898,"Tenda de Carro"},{1666,"Tenda Média"},{2958,"Tenda Grande"},{2751,"Tenda"}},
+    ["TENDAS DE BASE"] = {{14603,"Tenda de Carro"},{9362,"Tenda Grande"},{14814,"Tenda Média"},{3919,"Tenda"}},
+
+    CARRO    = {{2293,"Vela"},{2079,"Bateria"},{2224,"Radiador"},{1650,"Gasolina"}},
+
+    OUTROS   = {{5171,"Rádio"},{1581,"Cartão do Bunker"},{1589,"Roupa"}},
+
+    PLATE    = { {{2053,1954,2869,1957,2500}, "Todos Plates"} },
+}
+
+-- ORDEM (com BLIPS)
+local order = {
+    "BLIPS",
+    "MOCHILAS","COLETES","RIFLES","SNIPERS","MUNICAO",
+    "MEDICO","CAPACETE","COMIDA","BEBIDAS",
+    "TENDAS","TENDAS DE BASE","CARRO","OUTROS","PLATE"
+}
+
+---------------------------------------
+-- HELPERS (ids)
+---------------------------------------
+local function getItemIds(it)
+    if type(it[1]) == "table" then
+        return it[1]
+    end
+    return { it[1] }
+end
+
+local function setIdsState(ids, state)
+    for _, id in ipairs(ids) do
+        selectedIDs[id] = state
+    end
+end
+
+local function isAllIdsChecked(ids)
+    for _, id in ipairs(ids) do
+        if not selectedIDs[id] then
+            return false
+        end
+    end
+    return true
+end
+
+local function isCategoryChecked(cat)
+    local list = categories[cat]
+    if not list then return false end
+    for _, it in ipairs(list) do
+        if not isAllIdsChecked(getItemIds(it)) then
+            return false
+        end
+    end
+    return true
+end
+
+local function updateMasterForCurrent()
+    if isElement(ui.masterCheck) and ui.currentCat and categories[ui.currentCat] then
+        guiCheckBoxSetSelected(ui.masterCheck, isCategoryChecked(ui.currentCat))
+    end
+end
+
+local function clearItemsPanel()
+    if isElement(ui.itemsPane) then
+        destroyElement(ui.itemsPane)
+        ui.itemsPane = nil
+    end
+    ui.itemRows = {}
+end
+
+---------------------------------------
+-- UI: BLIPS (painel da direita)
+---------------------------------------
+local function buildBlipsPanel()
+    clearItemsPanel()
+    ui.currentCat = "BLIPS"
+
+    -- esconde "Marcar todos" (é do modo itens)
+    if isElement(ui.masterCheck) then
+        guiSetVisible(ui.masterCheck, false)
+    end
+
+    ui.itemsPane = guiCreateScrollPane(200, 115, 390, 345, false, ui.window)
+
+    local y = 12
+    local line = 30
+    local px = 18
+
+    -- cria checkboxes pros blips
+    for key, cfg in pairs(blips.cfg) do
+        local cb = guiCreateCheckBox(px, y, 340, 22, cfg.name, cfg.enabled, false, ui.itemsPane)
+
+        addEventHandler("onClientGUIClick", cb, function()
+            blips.Toggle(key, guiCheckBoxGetSelected(cb))
+        end, false)
+
+        y = y + line
+    end
+
+    y = y + 10
+
+    local btnRefresh = guiCreateButton(px, y, 110, 30, "🔄 Refresh", false, ui.itemsPane)
+    local btnClear   = guiCreateButton(px + 120, y, 110, 30, "🗑️ Limpar", false, ui.itemsPane)
+    local btnAll     = guiCreateButton(px + 240, y, 110, 30, "✅ Todos", false, ui.itemsPane)
+
+    addEventHandler("onClientGUIClick", btnRefresh, function()
+        blips.Refresh()
+    end, false)
+
+    addEventHandler("onClientGUIClick", btnClear, function()
+        for k,_ in pairs(blips.cfg) do
+            blips.cfg[k].enabled = false
+        end
+        blips.Refresh()
+        buildBlipsPanel()
+    end, false)
+
+    addEventHandler("onClientGUIClick", btnAll, function()
+        for k,_ in pairs(blips.cfg) do
+            blips.cfg[k].enabled = true
+        end
+        blips.Refresh()
+        buildBlipsPanel()
+    end, false)
+end
+
+---------------------------------------
+-- UI: Itens (painel da direita)
+---------------------------------------
+local function buildItemsForCategory(cat)
+    if not isElement(ui.window) then return end
+
+    -- se BLIPS: UI especial
+    if cat == "BLIPS" then
+        buildBlipsPanel()
+        return
+    end
+
+    ui.currentCat = cat
+    clearItemsPanel()
+
+    -- mostra "Marcar todos" novamente
+    if isElement(ui.masterCheck) then
+        guiSetVisible(ui.masterCheck, true)
+    end
+
+    ui.itemsPane = guiCreateScrollPane(200, 115, 390, 345, false, ui.window)
+
+    -- espaçamento/alinhamento (igual você pediu)
+    local y = 12
+    local lineHeight = 28
+    local paddingX = 18
+
+    for _, it in ipairs(categories[cat] or {}) do
+        local ids = getItemIds(it)
+        local label = it[2] or ("ID " .. tostring(ids[1]))
+        local checked = isAllIdsChecked(ids)
+
+        local cb = guiCreateCheckBox(paddingX, y, 360, 22, label, checked, false, ui.itemsPane)
+        table.insert(ui.itemRows, { cb = cb, ids = ids })
+
+        addEventHandler("onClientGUIClick", cb, function()
+            local state = guiCheckBoxGetSelected(cb)
+            setIdsState(ids, state)
+            updateMasterForCurrent()
+        end, false)
+
+        y = y + lineHeight
+    end
+
+    updateMasterForCurrent()
+end
+
+---------------------------------------
+-- UI: Selecionar categoria da esquerda
+---------------------------------------
+local function selectCategoryByRow(row)
+    if not isElement(ui.catList) then return end
+    local cat = guiGridListGetItemData(ui.catList, row, 1)
+    if type(cat) == "string" then
+        if cat == "BLIPS" or categories[cat] then
+            buildItemsForCategory(cat)
+        end
+    end
+end
+
+---------------------------------------
+-- UI: Criar Menu
+---------------------------------------
+local function createMenu()
+    if isElement(ui.window) then return end
+
+    local sx, sy = guiGetScreenSize()
+    local w, h = 600, 480
+    local x, y = (sx - w) / 2, (sy - h) / 2
+
+    ui.window = guiCreateWindow(x, y, w, h, "MENU PUXAR OBJETOS", false)
+    guiWindowSetSizable(ui.window, false)
+
+    guiCreateLabel(15, 28, 140, 20, "Distância:", false, ui.window)
+    ui.editDistance = guiCreateEdit(90, 25, 80, 25, tostring(pullDistance), false, ui.window)
+    local btnApply = guiCreateButton(180, 25, 80, 25, "Aplicar", false, ui.window)
+
+    guiCreateLabel(15, 75, 160, 20, "CATEGORIAS", false, ui.window)
+    guiCreateLabel(200, 75, 160, 20, "ITENS", false, ui.window)
+
+    -- categorias (esquerda)
+    ui.catList = guiCreateGridList(10, 105, 180, 355, false, ui.window)
+    guiGridListAddColumn(ui.catList, "Nome", 0.85)
+
+    for _, cat in ipairs(order) do
+        if categories[cat] or cat == "BLIPS" then
+            local row = guiGridListAddRow(ui.catList)
+            guiGridListSetItemText(ui.catList, row, 1, cat, false, false)
+            guiGridListSetItemData(ui.catList, row, 1, cat)
+        end
+    end
+
+    -- master (modo itens)
+    ui.masterCheck = guiCreateCheckBox(200, 95, 200, 18, "Marcar todos", false, false, ui.window)
+
+    addEventHandler("onClientGUIClick", btnApply, function()
+        local v = tonumber(guiGetText(ui.editDistance))
+        if v then
+            pullDistance = math.max(1, math.min(9999, v))
+        end
+        guiSetText(ui.editDistance, tostring(pullDistance))
+    end, false)
+
+    addEventHandler("onClientGUIClick", ui.catList, function()
+        local row = guiGridListGetSelectedItem(ui.catList)
+        if row and row ~= -1 then
+            selectCategoryByRow(row)
+        end
+    end, false)
+
+    addEventHandler("onClientGUIClick", ui.masterCheck, function()
+        if not ui.currentCat or ui.currentCat == "BLIPS" then return end
+        local state = guiCheckBoxGetSelected(ui.masterCheck)
+        for _, row in ipairs(ui.itemRows) do
+            setIdsState(row.ids, state)
+            if isElement(row.cb) then
+                guiCheckBoxSetSelected(row.cb, state)
+            end
+        end
+    end, false)
+
+    -- abre já na primeira categoria
+    if guiGridListGetRowCount(ui.catList) > 0 then
+        guiGridListSetSelectedItem(ui.catList, 0, 1)
+        selectCategoryByRow(0)
+    end
+end
+
+local function toggleMenu(state)
+    menuOpen = state
+    if menuOpen then
+        createMenu()
+        guiSetVisible(ui.window, true)
+        showCursor(true)
+        guiBringToFront(ui.window)
+    else
+        if isElement(ui.window) then
+            guiSetVisible(ui.window, false)
+        end
+        showCursor(false)
+    end
+end
+
+---------------------------------------
+-- PUXAR OBJETOS
+---------------------------------------
+local function pullNearbyObjects()
+    local px, py, pz = getElementPosition(localPlayer)
+    for _, o in ipairs(getElementsByType("object")) do
+        local id = getElementModel(o)
+        if selectedIDs[id] then
+            local ox, oy, oz = getElementPosition(o)
+            if getDistanceBetweenPoints3D(px, py, pz, ox, oy, oz) <= pullDistance then
+                setElementPosition(
+                    o,
+                    ox + (px - ox) * pullSpeed,
+                    oy + (py - oy) * pullSpeed,
+                    oz + (pz - oz) * pullSpeed
+                )
+            end
+        end
+    end
+end
+
+---------------------------------------
+-- BINDS
+---------------------------------------
+bindKey(menuKey, "down", function()
+    toggleMenu(not menuOpen)
+end)
+
+bindKey(pullKey, "down", function()
+    addEventHandler("onClientRender", root, pullNearbyObjects)
+end)
+
+bindKey(pullKey, "up", function()
+    removeEventHandler("onClientRender", root, pullNearbyObjects)
+end)
+
+---------------------------------------
+-- LIMPEZA
+---------------------------------------
+addEventHandler("onClientResourceStop", resourceRoot, function()
+    if isElement(ui.window) then destroyElement(ui.window) end
+    showCursor(false)
+end)
+
+-- start: refresh blips silencioso
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    blips.Refresh()
+end)

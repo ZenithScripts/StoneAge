@@ -1,0 +1,198 @@
+-- Script Blips MTA:SA - Standalone com Painel GUI (Versão Limpa)
+local this = {}
+this.blips = {}
+
+-- Configuração dos blips
+this.blips.player = {
+    elemType = 'player',
+    elems = {},
+    enabled = false,
+    color = {255, 255, 0, 255},
+    name = "Jogadores"
+}
+
+this.blips.vehicle = {
+    elemType = 'vehicle',
+    elems = {},
+    enabled = false,
+    color = {255, 0, 0, 255},
+    name = "Veículos"
+}
+
+this.blips.object = {
+    elemType = 'object',
+    elems = {},
+    enabled = false,
+    color = {0, 255, 0, 255},
+    name = "Objetos",
+    query = function(elem)
+        return getElementData(elem, 'info:PlacedObject') ~= false
+    end
+}
+
+this.blips.helicrash = {
+    elemType = 'object',
+    elems = {},
+    enabled = false,
+    color = {255, 255, 255, 255},
+    name = "Helicrash",
+    query = function(elem)
+        return getElementData(elem, 'Helicrash') ~= false
+    end
+}
+
+this.blips.tankcrash = {
+    elemType = 'object',
+    elems = {},
+    enabled = false,
+    color = {100, 255, 100, 255},
+    name = "Tankcrash",
+    query = function(elem)
+        return getElementData(elem, 'Tankcrash') ~= false
+    end
+}
+
+-- Variáveis do painel
+local screenW, screenH = guiGetScreenSize()
+local panel = nil
+local checkboxes = {}
+
+-- Funções principais
+this.Toggle = function(what, state)
+    if not this.blips[what] then return false end
+    
+    if what == 'object' then
+        this.blips.object.root = root
+    elseif what == 'helicrash' or what == 'tankcrash' then
+        this.blips[what].root = root
+    end
+    
+    this.blips[what].enabled = state
+    this.Refresh()
+end
+
+this.Refresh = function()
+    for k, v in pairs(this.blips) do
+        for elem, blip in pairs(v.elems) do
+            if not isElement(elem) or not v.enabled then
+                if isElement(blip) then
+                    destroyElement(blip)
+                end
+                v.elems[elem] = nil
+            end
+        end
+        
+        if v.enabled then
+            local r, g, b, a = unpack(v.color)
+            for _, elem in ipairs(getElementsByType(v.elemType, v.root or root)) do
+                if not v.elems[elem] and (not v.query or v.query(elem)) then
+                    local blip = createBlipAttachedTo(elem, 0, 2, r, g, b, a, 0, 500)
+                    setElementParent(blip, elem)
+                    v.elems[elem] = blip
+                end
+            end
+        end
+    end
+end
+
+-- Criar painel principal com checkboxes
+function createPanel()
+    if panel then
+        destroyElement(panel)
+        panel = nil
+        showCursor(false)
+        return
+    end
+    
+    panel = guiCreateWindow((screenW - 350) / 2, (screenH - 400) / 2, 350, 400, "🎯 Painel de Blips", false)
+    guiWindowSetSizable(panel, false)
+    guiSetAlpha(panel, 0.95)
+    
+    -- Botão fechar
+    local closeBtn = guiCreateButton(300, 25, 35, 25, "✕", false, panel)
+    addEventHandler("onClientGUIClick", closeBtn, function()
+        destroyElement(panel)
+        panel = nil
+        showCursor(false)
+    end, false)
+    
+    -- Título
+    local title = guiCreateLabel(15, 30, 320, 25, "Ative/Desative os blips no mapa:", false, panel)
+    guiSetFont(title, "default-bold-small")
+    guiLabelSetHorizontalAlign(title, "center", false)
+    guiLabelSetColor(title, 100, 200, 255)
+    
+    -- Checkboxes para cada blip
+    local yPos = 65
+    for blipType, config in pairs(this.blips) do
+        -- Checkbox
+        checkboxes[blipType] = guiCreateCheckBox(20, yPos, 20, 20, "", config.enabled, false, panel)
+        addEventHandler("onClientGUIClick", checkboxes[blipType], function()
+            local state = guiCheckBoxGetSelected(source)
+            this.Toggle(blipType, state)
+        end, false)
+        
+        -- Label do nome com cor
+        local r, g, b = unpack(config.color)
+        local label = guiCreateLabel(50, yPos + 2, 280, 20, config.name, false, panel)
+        guiSetFont(label, "default-bold-small")
+        guiLabelSetColor(label, r, g, b)
+        
+        yPos = yPos + 35
+    end
+    
+    -- Botão Refresh
+    local refreshBtn = guiCreateButton(20, 320, 100, 35, "🔄 Refresh", false, panel)
+    addEventHandler("onClientGUIClick", refreshBtn, function()
+        this.Refresh()
+    end, false)
+    
+    -- Botão Limpar Todos
+    local clearBtn = guiCreateButton(130, 320, 100, 35, "🗑️ Limpar", false, panel)
+    addEventHandler("onClientGUIClick", clearBtn, function()
+        for blipType, checkbox in pairs(checkboxes) do
+            guiCheckBoxSetSelected(checkbox, false)
+            this.Toggle(blipType, false)
+        end
+        this.Refresh()
+    end, false)
+    
+    -- Botão Selecionar Todos
+    local selectAllBtn = guiCreateButton(240, 320, 90, 35, "✅ Todos", false, panel)
+    addEventHandler("onClientGUIClick", selectAllBtn, function()
+        for blipType, checkbox in pairs(checkboxes) do
+            guiCheckBoxSetSelected(checkbox, true)
+            this.Toggle(blipType, true)
+        end
+        this.Refresh()
+    end, false)
+    
+    showCursor(true)
+end
+
+-- Bind da tecla F9 para abrir/fechar
+bindKey("F9", "down", function()
+    createPanel()
+end)
+
+-- Auto-refresh periódico silencioso
+setTimer(this.Refresh, 5000, 0)
+
+-- Limpeza
+addEventHandler('onClientResourceStop', resourceRoot, function()
+    if panel then destroyElement(panel) end
+    for _, v in pairs(this.blips) do
+        for _, blip in pairs(v.elems) do
+            if isElement(blip) then destroyElement(blip) end
+        end
+    end
+    showCursor(false)
+end)
+
+-- Inicializar silenciosamente
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    this.Refresh()
+end)
+
+-- Registrar globalmente
+_G.AdminBlips = this
